@@ -1,0 +1,203 @@
+name: Deploy ALNOUR from private master
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-alnour-nindohost-production
+  cancel-in-progress: false
+
+env:
+  RELEASE_ROOT: _publication_release
+  RELEASE_NAME: ALNOUR-Nindohost-Production
+  CANONICAL_ORIGIN: https://alnour.ma
+  SOURCE_REPOSITORY: houseofwordslangue-dev/Prophet
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+
+    steps:
+      - name: Validate mirror secrets
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          NINDOHOST_FTP_HOST: ${{ secrets.NINDOHOST_FTP_HOST }}
+          NINDOHOST_FTP_USER: ${{ secrets.NINDOHOST_FTP_USER }}
+          NINDOHOST_FTP_PASSWORD: ${{ secrets.NINDOHOST_FTP_PASSWORD }}
+          NINDOHOST_FTP_PORT: ${{ secrets.NINDOHOST_FTP_PORT }}
+          NINDOHOST_FTP_REMOTE_DIR: ${{ secrets.NINDOHOST_FTP_REMOTE_DIR }}
+        run: |
+          set -euo pipefail
+          for var in SOURCE_REPO_TOKEN NINDOHOST_FTP_HOST NINDOHOST_FTP_USER NINDOHOST_FTP_PASSWORD NINDOHOST_FTP_REMOTE_DIR; do
+            [ -n "${!var:-}" ] || { echo "::error::Missing required secret: $var"; exit 1; }
+          done
+          EFFECTIVE_PORT="${NINDOHOST_FTP_PORT:-21}"
+          case "$EFFECTIVE_PORT" in ''|*[!0-9]*) echo '::error::FTP port must be numeric'; exit 1;; esac
+          case "$NINDOHOST_FTP_REMOTE_DIR" in /|.|..|"") echo '::error::Unsafe FTP document root'; exit 1;; esac
+          echo "NINDOHOST_EFFECTIVE_PORT=$EFFECTIVE_PORT" >> "$GITHUB_ENV"
+
+      - name: Checkout authoritative private MAIN
+        uses: actions/checkout@v4
+        with:
+          repository: houseofwordslangue-dev/Prophet
+          ref: main
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Pin source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 --no-tags origin main
+          git checkout --detach origin/main
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          test "$SOURCE_SHA" = "$(git rev-parse origin/main)"
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+
+      - name: Install runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq php-cli lftp
+          python3 -m py_compile \
+            scripts/normalize_public_media_snapshot.py \
+            scripts/build_publication_release.py \
+            scripts/recover_shifa_release.py \
+            scripts/editorial_publication_cleanup.py \
+            scripts/alnour_seo_regression_gate.py \
+            scripts/alnour_production_gate.py
+
+      - name: Build exact curated publication tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/normalize_public_media_snapshot.py
+          RELEASE_DIR="$RELEASE_ROOT/$RELEASE_NAME"
+          python3 scripts/build_publication_release.py --output "$RELEASE_DIR" --source-sha "$SOURCE_SHA"
+          python3 scripts/recover_shifa_release.py --release "$RELEASE_DIR"
+          python3 scripts/editorial_publication_cleanup.py --release "$RELEASE_DIR"
+          PUBLICATION_SITE="$RELEASE_DIR/site"
+          test -d "$PUBLICATION_SITE"
+          test -f "$RELEASE_DIR/SHIFA-EDITORIAL-RECOVERY.json"
+          test -f "$RELEASE_DIR/EDITORIAL-PUBLICATION-CLEANUP.json"
+          mkdir -p "$PUBLICATION_SITE/.well-known"
+          export PUBLICATION_SITE SOURCE_SHA
+          python3 - <<'PY'
+          import json, os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          marker={
+            "product":"ALNOUR",
+            "source_branch":"main",
+            "source_commit":os.environ["SOURCE_SHA"],
+            "built_utc":datetime.now(timezone.utc).isoformat(),
+            "production_gate":"10",
+            "curated_media":"builder-restored-exactly-692",
+            "shifa_recovery":"required-and-passed",
+            "editorial_cleanup":"required-and-passed",
+            "deployment":"nindohost-curated-public-tree-via-public-mirror"
+          }
+          (Path(os.environ["PUBLICATION_SITE"])/".well-known/alnour-release.json").write_text(
+            json.dumps(marker,ensure_ascii=False,indent=2)+"\n","utf-8"
+          )
+          PY
+          echo "PUBLICATION_SITE=$PUBLICATION_SITE" >> "$GITHUB_ENV"
+
+      - name: Fail-closed local production acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/alnour_seo_regression_gate.py --site "$PUBLICATION_SITE" --origin "$CANONICAL_ORIGIN"
+          python3 scripts/alnour_production_gate.py --site "$PUBLICATION_SITE" --origin "$CANONICAL_ORIGIN"
+          export SOURCE_SHA RELEASE_ROOT RELEASE_NAME PUBLICATION_SITE
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          release=Path(os.environ["RELEASE_ROOT"])/os.environ["RELEASE_NAME"]
+          m=json.loads((release/"RELEASE-MANIFEST.json").read_text("utf-8"))
+          c=json.loads((release/"EDITORIAL-PUBLICATION-CLEANUP.json").read_text("utf-8"))
+          s=json.loads((release/"SHIFA-EDITORIAL-RECOVERY.json").read_text("utf-8"))
+          marker=json.loads((Path(os.environ["PUBLICATION_SITE"])/".well-known/alnour-release.json").read_text("utf-8"))
+          assert m.get("source_branch")=="main"
+          assert m.get("source_commit")==os.environ["SOURCE_SHA"]==marker.get("source_commit")
+          assert s.get("status")=="PASS" and s.get("shifa_articles_scanned",0)>=8 and s.get("shifa_articles_recovered",0)>=1
+          assert c.get("status")=="PASS"
+          assert c.get("media_catalogue_records_detected")==692
+          assert c.get("media_catalogue_records_surviving")==692
+          assert m.get("editorial_cleanup",{}).get("status")=="PASS"
+          assert m.get("indexed_public_items")==c.get("surviving_public_items")
+          assert m.get("indexed_public_items",0)>=1000
+          PY
+
+      - name: Re-fetch authoritative MAIN before production write
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$SOURCE_SHA" || { echo "::error::Authoritative MAIN advanced; aborting stale deployment"; exit 1; }
+
+      - name: Deploy curated public tree only
+        shell: bash
+        env:
+          NINDOHOST_FTP_HOST: ${{ secrets.NINDOHOST_FTP_HOST }}
+          NINDOHOST_FTP_USER: ${{ secrets.NINDOHOST_FTP_USER }}
+          NINDOHOST_FTP_PASSWORD: ${{ secrets.NINDOHOST_FTP_PASSWORD }}
+          NINDOHOST_FTP_REMOTE_DIR: ${{ secrets.NINDOHOST_FTP_REMOTE_DIR }}
+        run: |
+          set -euo pipefail
+          EFFECTIVE_REMOTE_DIR="$NINDOHOST_FTP_REMOTE_DIR"
+
+          if ! lftp -e "set cmd:fail-exit true; set ftp:passive-mode true; set ftp:ssl-allow false; open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cd \"$NINDOHOST_FTP_REMOTE_DIR\"; bye"; then
+            if lftp -e "set cmd:fail-exit true; set ftp:passive-mode true; set ftp:ssl-allow false; open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cls -1 home.php; bye" >/dev/null; then
+              EFFECTIVE_REMOTE_DIR="."
+            else
+              echo "::error::Configured FTP document root is unavailable and FTP root is not an existing ALNOUR document root."
+              exit 1
+            fi
+          fi
+
+          lftp <<LFTP
+          set cmd:fail-exit true
+          set cmd:trace false
+          set ftp:passive-mode true
+          set ftp:ssl-allow false
+          set net:max-retries 3
+          set net:timeout 30
+          open -p "$NINDOHOST_EFFECTIVE_PORT" -u "$NINDOHOST_FTP_USER","$NINDOHOST_FTP_PASSWORD" "$NINDOHOST_FTP_HOST"
+          lcd "$PUBLICATION_SITE"
+          cd "$EFFECTIVE_REMOTE_DIR"
+          mirror --reverse --delete --no-perms --parallel=4 --exclude-glob ".env" --exclude-glob ".env.*" --exclude-glob "*.zip" --exclude-glob "*.sha256" ./ ./
+          cls -1 home.php
+          cls -1 media.html
+          cls -1 .well-known/alnour-release.json
+          cls -1 _content/.htaccess
+          cls -1 data/.htaccess
+          bye
+          LFTP
+
+      - name: Live production acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/alnour_production_gate.py --live --origin "$CANONICAL_ORIGIN" --expected-sha "$SOURCE_SHA" --retries 6
+
+      - name: Deployment summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### ALNOUR public deployment mirror"
+            echo "- Authoritative repository: `houseofwordslangue-dev/Prophet`"
+            echo "- Source commit: `${SOURCE_SHA:-unknown}`"
+            echo "- No editorial corpus is stored in this public mirror"
+            echo "- Curated build, editorial cleanup, SEO and production gates run before FTP"
+            echo "- Exact remote mirror deletion remains enabled"
+            echo "- Live SHA verification runs after upload"
+          } >> "$GITHUB_STEP_SUMMARY"
