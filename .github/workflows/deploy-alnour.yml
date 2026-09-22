@@ -24,7 +24,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 240
 
     steps:
       - name: Validate mirror secrets
@@ -172,7 +172,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$SOURCE_SHA" = "$PINNED_SOURCE_SHA"
 
-      - name: Restore curated public tree non-destructively
+      - name: Restore critical runtime first
         shell: bash
         env:
           NINDOHOST_FTP_HOST: ${{ secrets.NINDOHOST_FTP_HOST }}
@@ -192,17 +192,49 @@ jobs:
             fi
           fi
 
+          # Restore the small runtime/control surface first so production is
+          # coherent before the large content tree resumes.
           lftp <<LFTP
           set cmd:fail-exit true
           set cmd:trace false
           set ftp:passive-mode true
           set ftp:ssl-allow false
-          set net:max-retries 3
-          set net:timeout 30
+          set net:max-retries 5
+          set net:timeout 20
+          set net:reconnect-interval-base 5
           open -p "$NINDOHOST_EFFECTIVE_PORT" -u "$NINDOHOST_FTP_USER","$NINDOHOST_FTP_PASSWORD" "$NINDOHOST_FTP_HOST"
           lcd "$PUBLICATION_SITE"
           cd "$EFFECTIVE_REMOTE_DIR"
-          mirror --reverse --transfer-all --no-perms --parallel=2 --exclude-glob ".env" --exclude-glob ".env.*" --exclude-glob "*.zip" --exclude-glob "*.sha256" ./ ./
+          mput -O . .htaccess index.php home.php content.php content-lib.php public-shell.php browse.php search.php api.php media.html 2>/dev/null || true
+          mirror --reverse --continue --no-perms --parallel=4 --include-glob "assets/**" --include-glob ".well-known/**" --exclude-glob "*" ./ ./
+          bye
+          LFTP
+
+      - name: Resume full curated tree non-destructively
+        shell: bash
+        env:
+          NINDOHOST_FTP_HOST: ${{ secrets.NINDOHOST_FTP_HOST }}
+          NINDOHOST_FTP_USER: ${{ secrets.NINDOHOST_FTP_USER }}
+          NINDOHOST_FTP_PASSWORD: ${{ secrets.NINDOHOST_FTP_PASSWORD }}
+          NINDOHOST_FTP_REMOTE_DIR: ${{ secrets.NINDOHOST_FTP_REMOTE_DIR }}
+        run: |
+          set -euo pipefail
+          EFFECTIVE_REMOTE_DIR="$NINDOHOST_FTP_REMOTE_DIR"
+          if ! lftp -e "set cmd:fail-exit true; set ftp:passive-mode true; set ftp:ssl-allow false; open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cd \"$NINDOHOST_FTP_REMOTE_DIR\"; bye"; then
+            EFFECTIVE_REMOTE_DIR="."
+          fi
+          lftp <<LFTP
+          set cmd:fail-exit true
+          set cmd:trace false
+          set ftp:passive-mode true
+          set ftp:ssl-allow false
+          set net:max-retries 5
+          set net:timeout 20
+          set net:reconnect-interval-base 5
+          open -p "$NINDOHOST_EFFECTIVE_PORT" -u "$NINDOHOST_FTP_USER","$NINDOHOST_FTP_PASSWORD" "$NINDOHOST_FTP_HOST"
+          lcd "$PUBLICATION_SITE"
+          cd "$EFFECTIVE_REMOTE_DIR"
+          mirror --reverse --continue --no-perms --parallel=4 --exclude-glob ".env" --exclude-glob ".env.*" --exclude-glob "*.zip" --exclude-glob "*.sha256" ./ ./
           cls -1 home.php
           cls -1 media.html
           cls -1 .well-known/alnour-release.json
@@ -234,6 +266,6 @@ jobs:
             echo "- Explicitly pinned source commit: ${SOURCE_SHA:-unknown}"
             echo "- No editorial corpus is stored in this public mirror"
             echo "- Curated build, editorial cleanup, SEO and production gates run before FTP"
-            echo "- Restoration-safe FTP upload: no remote deletion; release files are re-uploaded with low concurrency"
+            echo "- Restoration-safe FTP upload: no remote deletion; critical runtime first; resumable incremental mirror"
             echo "- Live SHA verification runs after upload"
           } >> "$GITHUB_STEP_SUMMARY"
