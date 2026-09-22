@@ -178,7 +178,7 @@ jobs:
           open -p "$NINDOHOST_EFFECTIVE_PORT" -u "$NINDOHOST_FTP_USER","$NINDOHOST_FTP_PASSWORD" "$NINDOHOST_FTP_HOST"
           lcd "$PUBLICATION_SITE"
           cd "$EFFECTIVE_REMOTE_DIR"
-          mirror --reverse --delete --no-perms --parallel=4 --exclude-glob ".env" --exclude-glob ".env.*" --exclude-glob "*.zip" --exclude-glob "*.sha256" ./ ./
+          mirror --reverse --delete --no-perms --parallel=12 --exclude-glob ".env" --exclude-glob ".env.*" --exclude-glob "*.zip" --exclude-glob "*.sha256" ./ ./
           cls -1 home.php
           cls -1 media.html
           cls -1 .well-known/alnour-release.json
@@ -186,6 +186,13 @@ jobs:
           cls -1 data/.htaccess
           bye
           LFTP
+
+      - name: Refuse stale source after FTP
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$SOURCE_SHA" || { echo "::error::Authoritative MAIN advanced during FTP; a fresh mirror run is required"; exit 1; }
 
       - name: Live production acceptance
         shell: bash
