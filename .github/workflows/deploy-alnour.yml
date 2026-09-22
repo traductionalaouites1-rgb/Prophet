@@ -172,7 +172,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$SOURCE_SHA" = "$PINNED_SOURCE_SHA"
 
-      - name: Deploy curated public tree only
+      - name: Restore curated public tree non-destructively
         shell: bash
         env:
           NINDOHOST_FTP_HOST: ${{ secrets.NINDOHOST_FTP_HOST }}
@@ -202,7 +202,7 @@ jobs:
           open -p "$NINDOHOST_EFFECTIVE_PORT" -u "$NINDOHOST_FTP_USER","$NINDOHOST_FTP_PASSWORD" "$NINDOHOST_FTP_HOST"
           lcd "$PUBLICATION_SITE"
           cd "$EFFECTIVE_REMOTE_DIR"
-          mirror --reverse --delete --no-perms --parallel=12 --exclude-glob ".env" --exclude-glob ".env.*" --exclude-glob "*.zip" --exclude-glob "*.sha256" ./ ./
+          mirror --reverse --transfer-all --no-perms --parallel=2 --exclude-glob ".env" --exclude-glob ".env.*" --exclude-glob "*.zip" --exclude-glob "*.sha256" ./ ./
           cls -1 home.php
           cls -1 media.html
           cls -1 .well-known/alnour-release.json
@@ -234,6 +234,6 @@ jobs:
             echo "- Explicitly pinned source commit: ${SOURCE_SHA:-unknown}"
             echo "- No editorial corpus is stored in this public mirror"
             echo "- Curated build, editorial cleanup, SEO and production gates run before FTP"
-            echo "- Exact remote mirror deletion remains enabled"
+            echo "- Restoration-safe FTP upload: no remote deletion; release files are re-uploaded with low concurrency"
             echo "- Live SHA verification runs after upload"
           } >> "$GITHUB_STEP_SUMMARY"
