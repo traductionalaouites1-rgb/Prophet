@@ -2,6 +2,11 @@ name: Deploy ALNOUR from private master
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-alnour.yml'
+      - '.deployment-trigger'
 
 permissions:
   contents: read
