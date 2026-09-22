@@ -46,11 +46,19 @@ jobs:
           case "$NINDOHOST_FTP_REMOTE_DIR" in /|.|..|"") echo '::error::Unsafe FTP document root'; exit 1;; esac
           echo "NINDOHOST_EFFECTIVE_PORT=$EFFECTIVE_PORT" >> "$GITHUB_ENV"
 
-      - name: Checkout authoritative private MAIN
+      - name: Resolve explicitly requested source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          PINNED_SOURCE_SHA="$(curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/.deployment-trigger" | sed -n 's/^source_sha=//p' | head -n1 | tr -d '\r')"
+          [[ "$PINNED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid or missing source_sha in .deployment-trigger"; exit 1; }
+          echo "PINNED_SOURCE_SHA=$PINNED_SOURCE_SHA" >> "$GITHUB_ENV"
+
+      - name: Checkout explicitly pinned private source
         uses: actions/checkout@v4
         with:
           repository: houseofwordslangue-dev/Prophet
-          ref: main
+          ref: ${{ env.PINNED_SOURCE_SHA }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
           fetch-depth: 1
           persist-credentials: true
@@ -59,10 +67,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --depth=1 --no-tags origin main
-          git checkout --detach origin/main
           SOURCE_SHA="$(git rev-parse HEAD)"
-          test "$SOURCE_SHA" = "$(git rev-parse origin/main)"
+          test "$SOURCE_SHA" = "$PINNED_SOURCE_SHA"
           echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
 
       - name: Install runtime
@@ -159,12 +165,12 @@ jobs:
           assert m.get("indexed_public_items",0)>=1000
           PY
 
-      - name: Re-fetch authoritative MAIN before production write
+      - name: Verify pinned source before production write
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --depth=1 --no-tags origin main
-          test "$(git rev-parse origin/main)" = "$SOURCE_SHA" || { echo "::error::Authoritative MAIN advanced; aborting stale deployment"; exit 1; }
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$SOURCE_SHA" = "$PINNED_SOURCE_SHA"
 
       - name: Deploy curated public tree only
         shell: bash
@@ -205,12 +211,12 @@ jobs:
           bye
           LFTP
 
-      - name: Refuse stale source after FTP
+      - name: Verify pinned source after FTP
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --depth=1 --no-tags origin main
-          test "$(git rev-parse origin/main)" = "$SOURCE_SHA" || { echo "::error::Authoritative MAIN advanced during FTP; a fresh mirror run is required"; exit 1; }
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$SOURCE_SHA" = "$PINNED_SOURCE_SHA"
 
       - name: Live production acceptance
         shell: bash
@@ -225,7 +231,7 @@ jobs:
           {
             echo "### ALNOUR public deployment mirror"
             echo "- Authoritative repository: houseofwordslangue-dev/Prophet"
-            echo "- Source commit: ${SOURCE_SHA:-unknown}"
+            echo "- Explicitly pinned source commit: ${SOURCE_SHA:-unknown}"
             echo "- No editorial corpus is stored in this public mirror"
             echo "- Curated build, editorial cleanup, SEO and production gates run before FTP"
             echo "- Exact remote mirror deletion remains enabled"
