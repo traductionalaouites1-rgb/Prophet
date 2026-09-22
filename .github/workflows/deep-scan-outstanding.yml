@@ -9,3 +9,120 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/deep-scan-outstanding.yml'
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_REPOSITORY: houseofwordslangue-dev/Prophet
+  CANONICAL_ORIGIN: https://alnour.ma
+
+jobs:
+  audits:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Validate private-source token
+        shell: bash
+        env:
+          SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${SOURCE_REPO_TOKEN:-}" || { echo "::error::Missing SOURCE_REPO_TOKEN"; exit 1; }
+
+      - name: Checkout authoritative private MAIN
+        uses: actions/checkout@v4
+        with:
+          repository: houseofwordslangue-dev/Prophet
+          ref: main
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Pin current MAIN
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 --no-tags origin main
+          git checkout --detach origin/main
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          test "$SOURCE_SHA" = "$(git rev-parse origin/main)"
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+
+      - name: Human editorial quality audit
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p _audit
+          python3 scripts/audit_public_human_quality.py --root . --json _audit/PUBLIC-HUMAN-QUALITY.json --md _audit/PUBLIC-HUMAN-QUALITY.md
+          exit 0
+
+      - name: Parallel-product reconciliation audit
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e
+          python3 scripts/audit_parallel_products.py --root . --json _audit/PARALLEL-PRODUCT-INVENTORY.json --md _audit/PARALLEL-PRODUCT-INVENTORY.md
+          exit 0
+
+      - name: Machine rewrite queue audit
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e
+          python3 scripts/audit_machine_rewrite_queue.py
+          exit 0
+
+      - name: Publication build diagnostic
+        shell: bash
+        continue-on-error: true
+        run: |
+          set +e
+          python3 scripts/normalize_public_media_snapshot.py
+          python3 scripts/build_publication_release.py --output _deep_scan_release --source-sha "$SOURCE_SHA"
+          b=$?
+          if [ $b -eq 0 ]; then python3 scripts/recover_shifa_release.py --release _deep_scan_release; b=$?; fi
+          if [ $b -eq 0 ]; then python3 scripts/editorial_publication_cleanup.py --release _deep_scan_release; b=$?; fi
+          exit 0
+
+      - name: Summarize outstanding work
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          out={"source_sha":os.environ.get("SOURCE_SHA")}
+          p=Path("_audit/PUBLIC-HUMAN-QUALITY.json")
+          if p.exists():
+              d=json.loads(p.read_text("utf-8"))
+              out["human_quality"]={k:v for k,v in d.items() if k!="findings"}
+          p=Path("_audit/PARALLEL-PRODUCT-INVENTORY.json")
+          if p.exists():
+              d=json.loads(p.read_text("utf-8"))
+              out["parallel_products"]={
+                  "files_scanned":d.get("files_scanned"),
+                  "duplicate_body_group_count":d.get("duplicate_body_group_count"),
+                  "title_collision_group_count":d.get("title_collision_group_count"),
+                  "flag_counts":d.get("flag_counts"),
+                  "queue_counts":{k:len(v) for k,v in (d.get("queues") or {}).items()},
+              }
+          p=Path("27-project/reports/MACHINE-REWRITE-QUEUE-2026-09-13.json")
+          if p.exists():
+              d=json.loads(p.read_text("utf-8"))
+              out["machine_rewrite_queue"]={k:v for k,v in d.items() if k not in {"items","files","findings"}}
+          p=Path("_deep_scan_release/RELEASE-MANIFEST.json")
+          if p.exists():
+              d=json.loads(p.read_text("utf-8"))
+              out["publication_build"]={
+                  "indexed_public_items":d.get("indexed_public_items"),
+                  "public_items_by_type":d.get("public_items_by_type"),
+                  "excluded_by_publication_gate":d.get("excluded_by_publication_gate"),
+                  "status":d.get("status"),
+              }
+          print("ALNOUR_DEEP_SCAN="+json.dumps(out,ensure_ascii=False))
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
+              f.write("### ALNOUR deep outstanding-work scan\n\n")
+              f.write("Source commit: "+str(out.get("source_sha"))+"\n\n")
+              f.write(json.dumps(out,ensure_ascii=False,indent=2)+"\n")
+          PY
