@@ -1,4 +1,4 @@
-# final-reconciliation-refresh: latest-main-2026-09-22
+# final-reconciliation-refresh: 5bf9bea6d5606d2cab8ae2606934f1fd63c92a64
 # retrigger: historical-master-reconciliation-2026-09-22
 # retrigger: legacy-public corpus recovery verification
 name: Deep scan ALNOUR outstanding work
