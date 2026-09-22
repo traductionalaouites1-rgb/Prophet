@@ -1,2 +1,3 @@
 ALNOUR deployment trigger
 source: houseofwordslangue-dev/Prophet main
+trigger-version: 2
