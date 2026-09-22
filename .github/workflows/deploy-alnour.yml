@@ -77,7 +77,25 @@ jobs:
             scripts/recover_shifa_release.py \
             scripts/editorial_publication_cleanup.py \
             scripts/alnour_seo_regression_gate.py \
-            scripts/alnour_production_gate.py
+            scripts/alnour_production_gate.py \
+            scripts/audit_public_human_quality.py \
+            scripts/alnour_tasheel_parity_gate.py
+
+      - name: Editorial and runtime parity preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p _preflight
+          python3 scripts/audit_public_human_quality.py --root . --json _preflight/PUBLIC-HUMAN-QUALITY.json --md _preflight/PUBLIC-HUMAN-QUALITY.md
+          python3 - <<'PY'
+          import json
+          d=json.load(open('_preflight/PUBLIC-HUMAN-QUALITY.json',encoding='utf-8'))
+          assert d.get('status')=='PASS'
+          assert d.get('critical_severity',0)==0
+          assert d.get('high_severity',0)==0
+          assert d.get('blocker_files',0)==0
+          PY
+          python3 scripts/alnour_tasheel_parity_gate.py --site site --origin "$CANONICAL_ORIGIN"
 
       - name: Build exact curated publication tree
         shell: bash
