@@ -2,11 +2,6 @@ name: Deploy ALNOURPEDIA production
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/deploy-alnour.yml'
-      - '.deployment-trigger'
 
 permissions:
   contents: read
@@ -181,11 +176,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # cPanel confirms this is a dedicated FTP account whose home path ends
-          # in /alnourpedia. Its FTP chroot root is therefore the deployment root.
-          REMOTE_DIR="."
-          echo "Verified dedicated ALNOURPEDIA FTP account; deployment target is its chroot root."
-
+          # Dedicated FTP account is chrooted directly to the Alnourpedia
+          # document directory. Transfer directly at login root; no remote cd.
           lftp <<LFTP
           set cmd:fail-exit true
           set cmd:trace false
@@ -272,6 +264,6 @@ jobs:
             echo "- Explicitly pinned source commit: ${SOURCE_SHA:-unknown}"
             echo "- Canonical production origin: https://alnourpedia.org"
             echo "- Curated build, editorial cleanup, SEO and production gates run before FTP"
-            echo "- Dedicated cPanel FTP account: alnourpedia@alnourpedia.org on ftp.tarjma.ma:21; explicit FTPS; account chroot root is the ALNOURPEDIA document directory; support tree first, runtime last"
+            echo "- Manual-only deployment; dedicated cPanel FTP account uses its login root directly; explicit FTPS; support tree first, runtime last"
             echo "- Live SHA, canonical host, private-path and AR/FR/EN verification runs after upload"
           } >> "$GITHUB_STEP_SUMMARY"
