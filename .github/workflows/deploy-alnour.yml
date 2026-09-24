@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PINNED_SOURCE_SHA="$(curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/main/.deployment-trigger" | sed -n 's/^source_sha=//p' | head -n1 | tr -d '\r')"
+          PINNED_SOURCE_SHA="$(curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/.deployment-trigger" | sed -n 's/^source_sha=//p' | head -n1 | tr -d '\r')"
           [[ "$PINNED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid or missing source_sha in .deployment-trigger"; exit 1; }
           echo "PINNED_SOURCE_SHA=$PINNED_SOURCE_SHA" >> "$GITHUB_ENV"
 
