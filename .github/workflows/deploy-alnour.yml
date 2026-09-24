@@ -38,7 +38,6 @@ jobs:
           EFFECTIVE_PORT="${NINDOHOST_FTP_PORT:-21}"
           case "$EFFECTIVE_PORT" in ''|*[!0-9]*) echo '::error::FTP/FTPS port must be numeric'; exit 1;; esac
           echo "NINDOHOST_EFFECTIVE_PORT=$EFFECTIVE_PORT" >> "$GITHUB_ENV"
-          echo "NINDOHOST_EFFECTIVE_REMOTE_DIR=alnourpedia" >> "$GITHUB_ENV"
 
       - name: Resolve explicitly requested source commit
         shell: bash
@@ -189,7 +188,6 @@ jobs:
           set net:timeout 20
           set net:reconnect-interval-base 5
           open -p "$NINDOHOST_EFFECTIVE_PORT" -u "$NINDOHOST_FTP_USER","$NINDOHOST_FTP_PASSWORD" "$NINDOHOST_FTP_HOST"
-          cd "$REMOTE_DIR"
           lcd "$PUBLICATION_SITE"
 
           # Upload content/assets/support files first. Public entry points and
