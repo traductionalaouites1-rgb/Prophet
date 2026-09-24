@@ -1,4 +1,4 @@
-source_sha=e9f1e435ad1c3c5f5ad22554b4f14afdd195e329
-reason=alnourpedia-org-deploy-after-editorial-gate-alignment
+source_sha=120c510b3206b8c1e0fd8b5e7364993588b6658c
+reason=manual-only-alnourpedia-org
 canonical_origin=https://alnourpedia.org
-document_root=alnourpedia
+document_root=ftp-account-chroot-root
