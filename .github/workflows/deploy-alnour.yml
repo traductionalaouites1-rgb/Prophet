@@ -1,4 +1,4 @@
-name: Deploy ALNOUR from private master
+name: Deploy ALNOURPEDIA production
 
 on:
   workflow_dispatch:
@@ -17,8 +17,8 @@ concurrency:
 
 env:
   RELEASE_ROOT: _publication_release
-  RELEASE_NAME: ALNOUR-Nindohost-Production
-  CANONICAL_ORIGIN: https://alnour.ma
+  RELEASE_NAME: ALNOURPEDIA-Nindohost-Production
+  CANONICAL_ORIGIN: https://alnourpedia.org
   SOURCE_REPOSITORY: houseofwordslangue-dev/Prophet
 
 jobs:
@@ -35,16 +35,15 @@ jobs:
           NINDOHOST_FTP_USER: ${{ secrets.NINDOHOST_FTP_USER }}
           NINDOHOST_FTP_PASSWORD: ${{ secrets.NINDOHOST_FTP_PASSWORD }}
           NINDOHOST_FTP_PORT: ${{ secrets.NINDOHOST_FTP_PORT }}
-          NINDOHOST_FTP_REMOTE_DIR: ${{ secrets.NINDOHOST_FTP_REMOTE_DIR }}
         run: |
           set -euo pipefail
-          for var in SOURCE_REPO_TOKEN NINDOHOST_FTP_HOST NINDOHOST_FTP_USER NINDOHOST_FTP_PASSWORD NINDOHOST_FTP_REMOTE_DIR; do
+          for var in SOURCE_REPO_TOKEN NINDOHOST_FTP_HOST NINDOHOST_FTP_USER NINDOHOST_FTP_PASSWORD; do
             [ -n "${!var:-}" ] || { echo "::error::Missing required secret: $var"; exit 1; }
           done
           EFFECTIVE_PORT="${NINDOHOST_FTP_PORT:-21}"
-          case "$EFFECTIVE_PORT" in ''|*[!0-9]*) echo '::error::FTP port must be numeric'; exit 1;; esac
-          case "$NINDOHOST_FTP_REMOTE_DIR" in /|.|..|"") echo '::error::Unsafe FTP document root'; exit 1;; esac
+          case "$EFFECTIVE_PORT" in ''|*[!0-9]*) echo '::error::FTP/FTPS port must be numeric'; exit 1;; esac
           echo "NINDOHOST_EFFECTIVE_PORT=$EFFECTIVE_PORT" >> "$GITHUB_ENV"
+          echo "NINDOHOST_EFFECTIVE_REMOTE_DIR=alnourpedia" >> "$GITHUB_ENV"
 
       - name: Resolve explicitly requested source commit
         shell: bash
@@ -123,7 +122,7 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
           marker={
-            "product":"ALNOUR",
+            "product":"ALNOURPEDIA",
             "source_branch":"main",
             "source_commit":os.environ["SOURCE_SHA"],
             "built_utc":datetime.now(timezone.utc).isoformat(),
@@ -131,7 +130,7 @@ jobs:
             "curated_media":"builder-restored-exactly-692",
             "shifa_recovery":"required-and-passed",
             "editorial_cleanup":"required-and-passed",
-            "deployment":"nindohost-curated-public-tree-via-public-mirror"
+            "deployment":"alnourpedia-org-nindohost-public-mirror"
           }
           (Path(os.environ["PUBLICATION_SITE"])/".well-known/alnour-release.json").write_text(
             json.dumps(marker,ensure_ascii=False,indent=2)+"\n","utf-8"
@@ -172,71 +171,76 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test "$SOURCE_SHA" = "$PINNED_SOURCE_SHA"
 
-      - name: Restore critical runtime first
+      - name: Deploy ALNOURPEDIA tree with runtime last
         shell: bash
         env:
           NINDOHOST_FTP_HOST: ${{ secrets.NINDOHOST_FTP_HOST }}
           NINDOHOST_FTP_USER: ${{ secrets.NINDOHOST_FTP_USER }}
           NINDOHOST_FTP_PASSWORD: ${{ secrets.NINDOHOST_FTP_PASSWORD }}
-          NINDOHOST_FTP_REMOTE_DIR: ${{ secrets.NINDOHOST_FTP_REMOTE_DIR }}
         run: |
           set -euo pipefail
-          EFFECTIVE_REMOTE_DIR="$NINDOHOST_FTP_REMOTE_DIR"
 
-          if ! lftp -e "set cmd:fail-exit true; set ftp:passive-mode true; set ftp:ssl-allow false; open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cd \"$NINDOHOST_FTP_REMOTE_DIR\"; bye"; then
-            if lftp -e "set cmd:fail-exit true; set ftp:passive-mode true; set ftp:ssl-allow false; open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cls -1 home.php; bye" >/dev/null; then
-              EFFECTIVE_REMOTE_DIR="."
-            else
-              echo "::error::Configured FTP document root is unavailable and FTP root is not an existing ALNOUR document root."
-              exit 1
-            fi
-          fi
+          # The cPanel document root is intentionally fixed to the new site folder.
+          # No fallback to FTP "." or any other legacy document root is permitted.
+          test "$NINDOHOST_EFFECTIVE_REMOTE_DIR" = "alnourpedia"
 
-          # Restore the small runtime/control surface first so production is
-          # coherent before the large content tree resumes.
           lftp <<LFTP
           set cmd:fail-exit true
           set cmd:trace false
           set ftp:passive-mode true
-          set ftp:ssl-allow false
-          set net:max-retries 5
+          set ftp:ssl-force true
+          set ftp:ssl-protect-data true
+          set ssl:verify-certificate yes
+          set net:max-retries 3
           set net:timeout 20
           set net:reconnect-interval-base 5
           open -p "$NINDOHOST_EFFECTIVE_PORT" -u "$NINDOHOST_FTP_USER","$NINDOHOST_FTP_PASSWORD" "$NINDOHOST_FTP_HOST"
+          cd "$NINDOHOST_EFFECTIVE_REMOTE_DIR"
           lcd "$PUBLICATION_SITE"
-          cd "$EFFECTIVE_REMOTE_DIR"
-          mput -O . .htaccess index.php home.php content.php content-lib.php public-shell.php browse.php search.php api.php media.html 2>/dev/null || true
-          mirror --reverse --continue --no-perms --parallel=4 --include-glob "assets/**" --include-glob ".well-known/**" --exclude-glob "*" ./ ./
-          bye
-          LFTP
 
-      - name: Resume full curated tree non-destructively
-        shell: bash
-        env:
-          NINDOHOST_FTP_HOST: ${{ secrets.NINDOHOST_FTP_HOST }}
-          NINDOHOST_FTP_USER: ${{ secrets.NINDOHOST_FTP_USER }}
-          NINDOHOST_FTP_PASSWORD: ${{ secrets.NINDOHOST_FTP_PASSWORD }}
-          NINDOHOST_FTP_REMOTE_DIR: ${{ secrets.NINDOHOST_FTP_REMOTE_DIR }}
-        run: |
-          set -euo pipefail
-          EFFECTIVE_REMOTE_DIR="$NINDOHOST_FTP_REMOTE_DIR"
-          if ! lftp -e "set cmd:fail-exit true; set ftp:passive-mode true; set ftp:ssl-allow false; open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cd \"$NINDOHOST_FTP_REMOTE_DIR\"; bye"; then
-            EFFECTIVE_REMOTE_DIR="."
-          fi
-          lftp <<LFTP
-          set cmd:fail-exit true
-          set cmd:trace false
-          set ftp:passive-mode true
-          set ftp:ssl-allow false
-          set net:max-retries 5
-          set net:timeout 20
-          set net:reconnect-interval-base 5
-          open -p "$NINDOHOST_EFFECTIVE_PORT" -u "$NINDOHOST_FTP_USER","$NINDOHOST_FTP_PASSWORD" "$NINDOHOST_FTP_HOST"
-          lcd "$PUBLICATION_SITE"
-          cd "$EFFECTIVE_REMOTE_DIR"
-          mirror --reverse --continue --no-perms --parallel=4 --exclude-glob ".env" --exclude-glob ".env.*" --exclude-glob "*.zip" --exclude-glob "*.sha256" ./ ./
+          # Upload content/assets/support files first. Public entry points and
+          # routing/control files are excluded here so readers never see a new
+          # runtime against an incomplete support tree.
+          mirror --reverse --continue --only-newer --no-perms --parallel=4 --verbose=1 \
+            --exclude-glob ".env" \
+            --exclude-glob ".env.*" \
+            --exclude-glob "*.zip" \
+            --exclude-glob "*.sha256" \
+            --exclude-glob ".well-known/acme-challenge/**" \
+            --exclude-glob "index.php" \
+            --exclude-glob "index.html" \
+            --exclude-glob "homepage.html" \
+            --exclude-glob "home.php" \
+            --exclude-glob "home-fallback.html" \
+            --exclude-glob "content.php" \
+            --exclude-glob "content-lib.php" \
+            --exclude-glob "public-shell.php" \
+            --exclude-glob "browse.php" \
+            --exclude-glob "search.php" \
+            --exclude-glob "api.php" \
+            --exclude-glob "asset.php" \
+            --exclude-glob "chat.php" \
+            --exclude-glob "home-feed.php" \
+            --exclude-glob "seo.php" \
+            --exclude-glob "sitemap.php" \
+            --exclude-glob "robots.txt" \
+            --exclude-glob "llms.txt" \
+            --exclude-glob "manifest.webmanifest" \
+            --exclude-glob "sw.js" \
+            --exclude-glob "media.html" \
+            --exclude-glob ".htaccess" \
+            --exclude-glob ".well-known/alnour-release.json" \
+            ./ ./
+
+          # Commit the complete public control surface only after support files
+          # have transferred successfully.
+          mput -O . index.php index.html homepage.html home.php home-fallback.html content.php content-lib.php public-shell.php browse.php search.php api.php asset.php chat.php home-feed.php seo.php sitemap.php robots.txt llms.txt manifest.webmanifest sw.js media.html .htaccess
+          mirror --reverse --continue --no-perms --parallel=1 --include-glob ".well-known/alnour-release.json" --exclude-glob "*" ./ ./
+
           cls -1 home.php
-          cls -1 media.html
+          cls -1 seo.php
+          cls -1 sitemap.php
+          cls -1 robots.txt
           cls -1 .well-known/alnour-release.json
           cls -1 _content/.htaccess
           cls -1 data/.htaccess
@@ -261,11 +265,11 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### ALNOUR public deployment mirror"
+            echo "### ALNOURPEDIA production deployment"
             echo "- Authoritative repository: houseofwordslangue-dev/Prophet"
             echo "- Explicitly pinned source commit: ${SOURCE_SHA:-unknown}"
-            echo "- No editorial corpus is stored in this public mirror"
+            echo "- Canonical production origin: https://alnourpedia.org"
             echo "- Curated build, editorial cleanup, SEO and production gates run before FTP"
-            echo "- Restoration-safe FTP upload: no remote deletion; critical runtime first; resumable incremental mirror"
-            echo "- Live SHA verification runs after upload"
+            echo "- Explicit FTPS only; fixed document root: alnourpedia; support tree first, runtime last"
+            echo "- Live SHA, canonical host, private-path and AR/FR/EN verification runs after upload"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -1,3 +1,4 @@
-source_sha=9ad85778c868c1e323fb876a4c261d3caee5ffeb
-reason=final-resolved-deploy
-cutoff=2026-09-20T03:16:00Z
+source_sha=cd198aad980e73781de4f8ce426959a16d3b0978
+reason=brand-new-alnourpedia-org-deploy
+canonical_origin=https://alnourpedia.org
+document_root=alnourpedia
