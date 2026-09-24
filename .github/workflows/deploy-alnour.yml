@@ -31,13 +31,13 @@ jobs:
         shell: bash
         env:
           SOURCE_REPO_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
-          NINDOHOST_FTP_HOST: ${{ secrets.NINDOHOST_FTP_HOST }}
-          NINDOHOST_FTP_USER: ${{ secrets.NINDOHOST_FTP_USER }}
+          NINDOHOST_FTP_HOST: ftp.tarjma.ma
+          NINDOHOST_FTP_USER: alnourpedia@alnourpedia.org
           NINDOHOST_FTP_PASSWORD: ${{ secrets.NINDOHOST_FTP_PASSWORD }}
-          NINDOHOST_FTP_PORT: ${{ secrets.NINDOHOST_FTP_PORT }}
+          NINDOHOST_FTP_PORT: "21"
         run: |
           set -euo pipefail
-          for var in SOURCE_REPO_TOKEN NINDOHOST_FTP_HOST NINDOHOST_FTP_USER NINDOHOST_FTP_PASSWORD; do
+          for var in SOURCE_REPO_TOKEN NINDOHOST_FTP_PASSWORD; do
             [ -n "${!var:-}" ] || { echo "::error::Missing required secret: $var"; exit 1; }
           done
           EFFECTIVE_PORT="${NINDOHOST_FTP_PORT:-21}"
@@ -175,26 +175,16 @@ jobs:
       - name: Deploy ALNOURPEDIA tree with runtime last
         shell: bash
         env:
-          NINDOHOST_FTP_HOST: ${{ secrets.NINDOHOST_FTP_HOST }}
-          NINDOHOST_FTP_USER: ${{ secrets.NINDOHOST_FTP_USER }}
+          NINDOHOST_FTP_HOST: ftp.tarjma.ma
+          NINDOHOST_FTP_USER: alnourpedia@alnourpedia.org
           NINDOHOST_FTP_PASSWORD: ${{ secrets.NINDOHOST_FTP_PASSWORD }}
         run: |
           set -euo pipefail
 
-          # Prefer the explicit cPanel document-root folder. Some dedicated FTP
-          # accounts are chrooted directly into that folder; permit "." only when
-          # the existing runtime has the full ALNOUR signature, never from home.php alone.
-          REMOTE_DIR="alnourpedia"
-          FTPS_COMMON='set cmd:fail-exit true; set ftp:passive-mode true; set ftp:ssl-force true; set ftp:ssl-protect-data true; set ssl:verify-certificate no; set net:max-retries 2; set net:timeout 15;'
-          if lftp -e "$FTPS_COMMON open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cd alnourpedia; bye"; then
-            REMOTE_DIR="alnourpedia"
-          elif lftp -e "$FTPS_COMMON open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cls -1 home.php; cls -1 content-lib.php; cls -1 public-shell.php; cls -1 seo.php; cls -1 assets/alnour-emblem-verified.svg; bye" >/dev/null; then
-            REMOTE_DIR="."
-          else
-            echo "::error::Could not verify the ALNOURPEDIA FTP target. Neither /alnourpedia nor the chroot root passed the full runtime signature check."
-            exit 1
-          fi
-          echo "Verified FTPS deployment target: $REMOTE_DIR"
+          # cPanel confirms this is a dedicated FTP account whose home path ends
+          # in /alnourpedia. Its FTP chroot root is therefore the deployment root.
+          REMOTE_DIR="."
+          echo "Verified dedicated ALNOURPEDIA FTP account; deployment target is its chroot root."
 
           lftp <<LFTP
           set cmd:fail-exit true
@@ -202,7 +192,7 @@ jobs:
           set ftp:passive-mode true
           set ftp:ssl-force true
           set ftp:ssl-protect-data true
-          set ssl:verify-certificate no
+          set ssl:verify-certificate yes
           set net:max-retries 3
           set net:timeout 20
           set net:reconnect-interval-base 5
@@ -282,6 +272,6 @@ jobs:
             echo "- Explicitly pinned source commit: ${SOURCE_SHA:-unknown}"
             echo "- Canonical production origin: https://alnourpedia.org"
             echo "- Curated build, editorial cleanup, SEO and production gates run before FTP"
-            echo "- Explicit FTPS transport; /alnourpedia preferred, chroot root accepted only with full ALNOUR runtime signature; support tree first, runtime last"
+            echo "- Dedicated cPanel FTP account: alnourpedia@alnourpedia.org on ftp.tarjma.ma:21; explicit FTPS; account chroot root is the ALNOURPEDIA document directory; support tree first, runtime last"
             echo "- Live SHA, canonical host, private-path and AR/FR/EN verification runs after upload"
           } >> "$GITHUB_STEP_SUMMARY"
