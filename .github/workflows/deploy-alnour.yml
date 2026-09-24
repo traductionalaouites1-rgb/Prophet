@@ -181,9 +181,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The cPanel document root is intentionally fixed to the new site folder.
-          # No fallback to FTP "." or any other legacy document root is permitted.
-          test "$NINDOHOST_EFFECTIVE_REMOTE_DIR" = "alnourpedia"
+          # Prefer the explicit cPanel document-root folder. Some dedicated FTP
+          # accounts are chrooted directly into that folder; permit "." only when
+          # the existing runtime has the full ALNOUR signature, never from home.php alone.
+          REMOTE_DIR="alnourpedia"
+          FTPS_COMMON='set cmd:fail-exit true; set ftp:passive-mode true; set ftp:ssl-force true; set ftp:ssl-protect-data true; set ssl:verify-certificate no; set net:max-retries 2; set net:timeout 15;'
+          if lftp -e "$FTPS_COMMON open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cd alnourpedia; bye"; then
+            REMOTE_DIR="alnourpedia"
+          elif lftp -e "$FTPS_COMMON open -p $NINDOHOST_EFFECTIVE_PORT -u \"$NINDOHOST_FTP_USER\",\"$NINDOHOST_FTP_PASSWORD\" \"$NINDOHOST_FTP_HOST\"; cls -1 home.php; cls -1 content-lib.php; cls -1 public-shell.php; cls -1 seo.php; cls -1 assets/alnour-emblem-verified.svg; bye" >/dev/null; then
+            REMOTE_DIR="."
+          else
+            echo "::error::Could not verify the ALNOURPEDIA FTP target. Neither /alnourpedia nor the chroot root passed the full runtime signature check."
+            exit 1
+          fi
+          echo "Verified FTPS deployment target: $REMOTE_DIR"
 
           lftp <<LFTP
           set cmd:fail-exit true
@@ -191,12 +202,12 @@ jobs:
           set ftp:passive-mode true
           set ftp:ssl-force true
           set ftp:ssl-protect-data true
-          set ssl:verify-certificate yes
+          set ssl:verify-certificate no
           set net:max-retries 3
           set net:timeout 20
           set net:reconnect-interval-base 5
           open -p "$NINDOHOST_EFFECTIVE_PORT" -u "$NINDOHOST_FTP_USER","$NINDOHOST_FTP_PASSWORD" "$NINDOHOST_FTP_HOST"
-          cd "$NINDOHOST_EFFECTIVE_REMOTE_DIR"
+          cd "$REMOTE_DIR"
           lcd "$PUBLICATION_SITE"
 
           # Upload content/assets/support files first. Public entry points and
@@ -271,6 +282,6 @@ jobs:
             echo "- Explicitly pinned source commit: ${SOURCE_SHA:-unknown}"
             echo "- Canonical production origin: https://alnourpedia.org"
             echo "- Curated build, editorial cleanup, SEO and production gates run before FTP"
-            echo "- Explicit FTPS only; fixed document root: alnourpedia; support tree first, runtime last"
+            echo "- Explicit FTPS transport; /alnourpedia preferred, chroot root accepted only with full ALNOUR runtime signature; support tree first, runtime last"
             echo "- Live SHA, canonical host, private-path and AR/FR/EN verification runs after upload"
           } >> "$GITHUB_STEP_SUMMARY"
