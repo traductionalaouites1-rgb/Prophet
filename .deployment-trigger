@@ -1,4 +1,4 @@
-source_sha=cd198aad980e73781de4f8ce426959a16d3b0978
-reason=brand-new-alnourpedia-org-deploy
+source_sha=e9f1e435ad1c3c5f5ad22554b4f14afdd195e329
+reason=alnourpedia-org-deploy-after-editorial-gate-alignment
 canonical_origin=https://alnourpedia.org
 document_root=alnourpedia
