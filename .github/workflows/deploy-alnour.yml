@@ -54,7 +54,7 @@ jobs:
           ref: ${{ env.PINNED_SOURCE_SHA }}
           token: ${{ secrets.SOURCE_REPO_TOKEN }}
           fetch-depth: 1
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Pin source commit
         shell: bash
