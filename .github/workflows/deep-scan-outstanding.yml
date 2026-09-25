@@ -1,21 +1,14 @@
-# final-reconciliation-refresh: e92f98c762adb0af3c53783465861ce2721a2212
-# retrigger: historical-master-reconciliation-2026-09-22
-# retrigger: legacy-public corpus recovery verification
-name: Deep scan ALNOUR outstanding work
+name: Deep scan ALNOURPEDIA outstanding work
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/deep-scan-outstanding.yml'
 
 permissions:
   contents: read
 
 env:
   SOURCE_REPOSITORY: houseofwordslangue-dev/Prophet
-  CANONICAL_ORIGIN: https://alnour.ma
+  CANONICAL_ORIGIN: https://alnourpedia.org
 
 jobs:
   audits:
@@ -30,23 +23,29 @@ jobs:
           set -euo pipefail
           test -n "${SOURCE_REPO_TOKEN:-}" || { echo "::error::Missing SOURCE_REPO_TOKEN"; exit 1; }
 
-      - name: Checkout authoritative private MAIN
-        uses: actions/checkout@v4
-        with:
-          repository: houseofwordslangue-dev/Prophet
-          ref: main
-          token: ${{ secrets.SOURCE_REPO_TOKEN }}
-          fetch-depth: 1
-          persist-credentials: true
-
-      - name: Pin current MAIN
+      - name: Resolve pinned ALNOURPEDIA source commit
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --depth=1 --no-tags origin main
-          git checkout --detach origin/main
+          PINNED_SOURCE_SHA="$(curl -fsSL "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/.deployment-trigger" | sed -n 's/^source_sha=//p' | head -n1 | tr -d '\r')"
+          [[ "$PINNED_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid or missing source_sha in .deployment-trigger"; exit 1; }
+          echo "PINNED_SOURCE_SHA=$PINNED_SOURCE_SHA" >> "$GITHUB_ENV"
+
+      - name: Checkout explicitly pinned private source
+        uses: actions/checkout@v4
+        with:
+          repository: houseofwordslangue-dev/Prophet
+          ref: ${{ env.PINNED_SOURCE_SHA }}
+          token: ${{ secrets.SOURCE_REPO_TOKEN }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify pinned source
+        shell: bash
+        run: |
+          set -euo pipefail
           SOURCE_SHA="$(git rev-parse HEAD)"
-          test "$SOURCE_SHA" = "$(git rev-parse origin/main)"
+          test "$SOURCE_SHA" = "$PINNED_SOURCE_SHA"
           echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
 
       - name: Human editorial quality audit
@@ -92,7 +91,11 @@ jobs:
           python3 - <<'PY'
           import json, os
           from pathlib import Path
-          out={"source_sha":os.environ.get("SOURCE_SHA")}
+          out={
+              "product":"ALNOURPEDIA",
+              "canonical_origin":os.environ.get("CANONICAL_ORIGIN"),
+              "source_sha":os.environ.get("SOURCE_SHA"),
+          }
           p=Path("_audit/PUBLIC-HUMAN-QUALITY.json")
           if p.exists():
               d=json.loads(p.read_text("utf-8"))
@@ -120,9 +123,10 @@ jobs:
                   "excluded_by_publication_gate":d.get("excluded_by_publication_gate"),
                   "status":d.get("status"),
               }
-          print("ALNOUR_DEEP_SCAN="+json.dumps(out,ensure_ascii=False))
+          print("ALNOURPEDIA_DEEP_SCAN="+json.dumps(out,ensure_ascii=False))
           with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
-              f.write("### ALNOUR deep outstanding-work scan\n\n")
-              f.write("Source commit: "+str(out.get("source_sha"))+"\n\n")
+              f.write("### ALNOURPEDIA deep outstanding-work scan\n\n")
+              f.write("Canonical origin: "+str(out.get("canonical_origin"))+"\n\n")
+              f.write("Pinned source commit: "+str(out.get("source_sha"))+"\n\n")
               f.write(json.dumps(out,ensure_ascii=False,indent=2)+"\n")
           PY
